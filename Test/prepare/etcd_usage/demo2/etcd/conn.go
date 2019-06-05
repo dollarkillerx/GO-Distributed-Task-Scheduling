@@ -15,6 +15,8 @@ var (
 	Etcd *clientv3.Client // 客户端
 	err error
 	Kv clientv3.KV  // 用于读写etcd的kv
+	Lease clientv3.Lease // 租约
+	Watcher clientv3.Watcher // 监听
 )
 
 func init() {
@@ -28,4 +30,6 @@ func init() {
 		panic(err.Error())
 	}
 	Kv = clientv3.NewKV(Etcd)
+	Lease = clientv3.NewLease(Etcd)
+	Watcher = clientv3.NewWatcher(Etcd)
 }
