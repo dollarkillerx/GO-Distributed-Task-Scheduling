@@ -85,4 +85,118 @@ MongoDb
     - 主从基于oplog复制同步(类比mysql binlog)
     - 客户端默认读写primary节点
 - Sharding结构
+![](./README/shar.png)
+    - mongos作为代理,路由请求到特定的shard
+    - 3个mongd节点组成config server,保存数据元信息
+    - 每个shard是一个replica set,可以无限扩容
+- Collection分片
+![](./README/mog3.png)
+    - collection自动分裂成多个chunk
+    - 每个chunk被自动负载均衡到不同的shard
+    - 每个shard可以保证其上的chunk高可用
+- 按range拆分chunk
+![](./README/mog4.png)
+    - shard key可以是单索引字段或者联合索引字段
+    - 超过16MB的chunk被一分为二
+    - 一个collection的所有chunk首尾相连,构成整个表
+- 按hash拆分chunk
+![](./README/mog5.png)
+    - shard key必须是hash索引
+    - shard key经过hash函数打散,避免写热点
+    - 支持预分配chunk,避免运行时分裂影响写入
+- shard用法
+    - 为DB激活特性:`sh.enableSharding('my_db')`
+    - 配置hash分片:`sh.shardCollection("my_db.my_collection",{
+    _id:"hashed"},false,{numlnitialChunks:10240})`
     
+``` 
+mongo 
+> show databases;
+> use my_db // 创建数据库
+> db.createCollection("my_collection") // 创建表
+{ "ok" : 1 }
+> show collections;
+my_collection
+> db.my_collection.insertOne({uid:100,name:"dollarkiller"})
+{
+	"acknowledged" : true,
+	"insertedId" : ObjectId("5cf9cbd50b9be5a8212e79fd")
+}
+> db.my_collection.find() // 不带条件都返回
+{ "_id" : ObjectId("5cf9cbd50b9be5a8212e79fd"), "uid" : 100, "name" : "dollarkiller" }
+> db.my_collection.find({uid:1000})
+> db.my_collection.find({uid:100})
+{ "_id" : ObjectId("5cf9cbd50b9be5a8212e79fd"), "uid" : 100, "name" : "dollarkiller" }
+> db.my_collection.createIndex({uid:1})  // 创建索引
+{
+	"createdCollectionAutomatically" : false,
+	"numIndexesBefore" : 1,
+	"numIndexesAfter" : 2,
+	"ok" : 1
+}
+
+```
+
+### golang 操作mongo
+依赖包
+``` 
+vgo get github.com/mongodb/mongo-go-driver
+```
+- init
+``` 
+var (
+	Mongo *mongo.Client
+	MongoDb *mongo.Database
+	e error
+)
+
+func init()  {
+	timeout, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	Mongo, e = mongo.Connect(timeout, options.Client().ApplyURI("mongodb://127.0.0.1:27017"))
+	MongoDb = Mongo.Database("cron")
+}
+```
+- 插入 
+```
+// 任务执行的时间点
+type TimePoint struct {
+	StartTime int64 `bson:"startTime"`// 开始时间
+	EndTime int64 `bson:"endTime"`// 结束时间
+}
+
+// 一条日志
+type LogRecord struct {
+	JobName string `bson:"jobName"` // 任务名称
+	Command string `bson:"command"`// shell命令
+	Err string `bson:"err"`// 脚本错误
+	Content string `bson:"content"`// 脚本输出
+	TimePoint TimePoint `bson:"timePoint"`// 执行时间
+}
+
+func main() {
+	logCollection := mongo.MongoDb.Collection("log")
+
+	// 插入记录
+	record := &LogRecord{
+		JobName:"job1",
+		Command:"echo hello",
+		Err:"",
+		Content:"hello",
+		TimePoint:TimePoint{
+			StartTime:time.Now().Unix(),
+			EndTime:time.Now().Unix()+10,
+		},
+	}
+
+	result, e := logCollection.InsertOne(context.TODO(), record)
+	if e != nil {
+		panic(e.Error())
+	}
+	// _id:默认生成一个全局唯一id:object id:12字节的二进制
+	if ids,ok := result.InsertedID.(primitive.ObjectID);ok{
+		fmt.Println(ids)
+	}else{
+		fmt.Println("no")
+	}
+}
+```
